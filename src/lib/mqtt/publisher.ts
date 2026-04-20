@@ -1,3 +1,27 @@
+import mqtt from "mqtt";
+
+let client: mqtt.MqttClient | null = null;
+
+function getClient() {
+  if (client) return client;
+
+  const url = process.env.FARMHQ_MQTT_BROKER || "mqtt://localhost:1883";
+
+  client = mqtt.connect(url, {
+    reconnectPeriod: 5000,
+  });
+
+  client.on("connect", () => {
+    console.log("[MQTT] connected to", url);
+  });
+
+  client.on("error", (err) => {
+    console.error("[MQTT error]", err.message);
+  });
+
+  return client;
+}
+
 export type MqttPublishInput = {
   topic: string;
   payload: Record<string, unknown>;
@@ -5,26 +29,35 @@ export type MqttPublishInput = {
   retain?: boolean;
 };
 
-/**
- * Placeholder MQTT publisher.
- *
- * In production this should connect to Mosquitto on core-111,
- * or publish through an internal broker/API bridge.
- */
 export async function publishMqtt(input: MqttPublishInput) {
-  const message = {
-    topic: input.topic,
-    payload: input.payload,
-    qos: input.qos ?? 0,
-    retain: input.retain ?? false,
+  const c = getClient();
+
+  const message = JSON.stringify({
+    ...input.payload,
     publishedAt: new Date().toISOString(),
-  };
+  });
 
-  console.log("[FarmHQ MQTT Publish]", JSON.stringify(message, null, 2));
-
-  return {
-    status: "queued",
-    broker: process.env.FARMHQ_MQTT_BROKER ?? "mock-broker",
-    ...message,
-  };
+  return new Promise((resolve, reject) => {
+    c.publish(
+      input.topic,
+      message,
+      {
+        qos: input.qos ?? 0,
+        retain: input.retain ?? false,
+      },
+      (err) => {
+        if (err) {
+          console.error("[MQTT publish error]", err);
+          reject(err);
+        } else {
+          console.log("[MQTT published]", input.topic);
+          resolve({
+            status: "sent",
+            topic: input.topic,
+            payload: input.payload,
+          });
+        }
+      }
+    );
+  });
 }
